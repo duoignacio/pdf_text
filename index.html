@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF to Text</title>
+<style>
+:root{--bg:#fafaf7;--fg:#1c1c1a;--muted:#6b6b66;--card:#fff;--line:#dcdcd4;--accent:#2f5d50;--accent-fg:#fff;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--fg:#ececE6;--muted:#9a9a92;--card:#1f1f1d;--line:#3a3a36;--accent:#6fb59f;--accent-fg:#10201b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161615;--fg:#ececE6;--muted:#9a9a92;--card:#1f1f1d;--line:#3a3a36;--accent:#6fb59f;--accent-fg:#10201b;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:820px;margin:0 auto;padding:28px 18px 48px}
+h1{font-size:1.6rem;margin:0 0 4px}
+p.sub{color:var(--muted);margin:0 0 20px}
+#drop{border:2px dashed var(--line);background:var(--card);border-radius:14px;padding:36px 16px;text-align:center;cursor:pointer;transition:border-color .15s}
+#drop.over{border-color:var(--accent)}
+#drop strong{display:block;font-size:1.05rem;margin-bottom:4px}
+#drop span{color:var(--muted);font-size:.92rem}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:8px 14px;border-radius:8px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:18px 0 10px}
+.bar label{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:.92rem}
+.spacer{flex:1}
+#status{color:var(--muted);font-size:.92rem;margin:8px 0}
+textarea{width:100%;min-height:340px;resize:vertical;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:12px;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>PDF to Text</h1>
+  <p class="sub">Extract the text from a PDF. Everything runs in your browser; the file never leaves your device.</p>
+
+  <div id="drop" tabindex="0">
+    <strong>Drop a PDF here or click to choose</strong>
+    <span>Works with text-based PDFs (scanned images need OCR)</span>
+    <input id="file" type="file" accept="application/pdf,.pdf" class="hidden">
+  </div>
+
+  <div id="status"></div>
+
+  <div id="out" class="hidden">
+    <div class="bar">
+      <label><input type="checkbox" id="markers" checked> Page markers</label>
+      <label><input type="checkbox" id="join"> Merge broken lines</label>
+      <span class="spacer"></span>
+      <button id="copy">Copy</button>
+      <button id="dl" class="primary">Download .txt</button>
+    </div>
+    <textarea id="text" spellcheck="false"></textarea>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let pages = [], fileName = "document";
+try { pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; } catch (e) {}
+
+const drop = $("drop"), fileIn = $("file");
+drop.onclick = () => fileIn.click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") fileIn.click(); };
+fileIn.onchange = () => fileIn.files[0] && load(fileIn.files[0]);
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) load(f); });
+
+async function load(file) {
+  if (typeof pdfjsLib === "undefined") { $("status").textContent = "The PDF library didn’t load. Check your connection and reload."; return; }
+  fileName = file.name.replace(/\.pdf$/i, "");
+  pages = [];
+  $("out").classList.add("hidden");
+  $("status").textContent = "Reading…";
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    for (let i = 1; i <= pdf.numPages; i++) {
+      $("status").textContent = "Extracting page " + i + " of " + pdf.numPages + "…";
+      const content = await (await pdf.getPage(i)).getTextContent();
+      let out = "", lastY = null;
+      for (const it of content.items) {
+        const y = it.transform[5];
+        if (lastY !== null && Math.abs(y - lastY) > 2) out += "\n";
+        else if (out && !out.endsWith(" ") && !out.endsWith("\n")) out += " ";
+        out += it.str;
+        if (it.hasEOL) out += "\n";
+        lastY = y;
+      }
+      pages.push(out.replace(/[ \t]+\n/g, "\n").trim());
+    }
+    const chars = pages.join("").length;
+    $("status").textContent = pdf.numPages + " page" + (pdf.numPages > 1 ? "s" : "") + ", " + chars.toLocaleString() + " characters" +
+      (chars < 20 ? ". Almost no text found; this may be a scanned PDF." : ".");
+    $("out").classList.remove("hidden");
+    render();
+  } catch (err) {
+    $("status").textContent = "Couldn’t read that file: " + (err && err.message ? err.message : err);
+  }
+}
+
+function render() {
+  const markers = $("markers").checked, join = $("join").checked;
+  $("text").value = pages.map((p, i) => {
+    let t = join ? p.replace(/([^\n])\n(?!\n)([^\n])/g, "$1 $2") : p;
+    return (markers ? "--- Page " + (i + 1) + " ---\n" : "") + t;
+  }).join("\n\n");
+}
+$("markers").onchange = $("join").onchange = render;
+
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("text").value); }
+  catch (e) { $("text").select(); document.execCommand("copy"); }
+  $("copy").textContent = "Copied"; setTimeout(() => $("copy").textContent = "Copy", 1200);
+};
+$("dl").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("text").value], { type: "text/plain;charset=utf-8" }));
+  a.download = fileName + ".txt";
+  document.body.appendChild(a); a.click(); a.remove();
+};
+</script>
+</body>
+</html>
